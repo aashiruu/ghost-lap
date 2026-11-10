@@ -1,0 +1,9 @@
+# Data & Cache
+data/*.json
+data/*.csv
+.fastf1_cache/
+
+# Binaries
+bin/
+*.exe
+*.test
