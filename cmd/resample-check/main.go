@@ -39,6 +39,10 @@ func main() {
 	rusGrid := telemetry.ResampleLinear(rusLap.Samples, rusArc, gridStep)
 	hamGrid := telemetry.ResampleLinear(hamLap.Samples, hamArc, gridStep)
 
+	if len(rusGrid) == 0 || len(hamGrid) == 0 {
+		log.Fatalf("Resampling failed: empty grid generated")
+	}
+
 	fmt.Println("=== STAGE 3 COMMON DISTANCE GRID RESAMPLING ===")
 	fmt.Printf("Grid Step Size              : %.1f m\n", gridStep)
 	fmt.Printf("RUS Resampled Grid Points   : %d points (Max Distance: %.1f m)\n", len(rusGrid), rusGrid[len(rusGrid)-1].Distance)

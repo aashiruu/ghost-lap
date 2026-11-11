@@ -4,7 +4,6 @@ import (
 	"math"
 )
 
-// ResampledPoint represents telemetry values on a uniform distance grid point
 type ResampledPoint struct {
 	Distance   float64 `json:"distance"`
 	RelTimeSec float64 `json:"rel_time_sec"`
@@ -16,7 +15,6 @@ type ResampledPoint struct {
 	Y          float64 `json:"y"`
 }
 
-// ComputeArcLengthDistance computes cumulative 2D spatial distance along X, Y coordinates
 func ComputeArcLengthDistance(samples []TelemetrySample) []float64 {
 	dist := make([]float64, len(samples))
 	if len(samples) == 0 {
@@ -27,18 +25,28 @@ func ComputeArcLengthDistance(samples []TelemetrySample) []float64 {
 		dx := samples[i].X - samples[i-1].X
 		dy := samples[i].Y - samples[i-1].Y
 		step := math.Hypot(dx, dy)
+		if step == 0 {
+			// Fallback to telemetry step if X,Y coordinates are static
+			step = samples[i].Distance - samples[i-1].Distance
+			if step <= 0 {
+				step = 8.5 // ~8.5m per frame nominal distance tick
+			}
+		}
 		dist[i] = dist[i-1] + step
 	}
 	return dist
 }
 
-// ResampleLinear interpolates driver telemetry onto a uniform distance grid using linear interpolation
 func ResampleLinear(samples []TelemetrySample, srcDist []float64, gridStep float64) []ResampledPoint {
-	if len(samples) == 0 || srcDist[len(srcDist)-1] == 0 {
+	if len(samples) == 0 || len(srcDist) == 0 {
 		return nil
 	}
 
 	maxDist := srcDist[len(srcDist)-1]
+	if maxDist <= 0 {
+		return nil
+	}
+
 	numSteps := int(maxDist/gridStep) + 1
 	result := make([]ResampledPoint, numSteps)
 
