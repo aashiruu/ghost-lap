@@ -16,3 +16,6 @@
 * **Linear vs Spline Interpolation**:
   * **Linear Interpolation**: Adopted for hot-path streaming resampling. It enforces strict monotonicity, eliminates overshoot risk on step functions (brake on/off, throttle snaps), and runs in $O(1)$ bounded time per distance step.
   * **Cubic Spline**: Higher continuity for smooth curves, but risks ringing/overshoot on binary signal transitions without heavy clamping guardrails.
+## Stage 4: Delta and Ground-Truth Verification
+* **Finish Line Delta Match**: Time delta calculated at the final grid distance point ($S_{\text{finish}}$) must match official timing difference ($+0.171\text{s}$) within strict numerical bounds ($\le 50\text{ms}$).
+
