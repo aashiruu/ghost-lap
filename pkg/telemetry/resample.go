@@ -26,10 +26,9 @@ func ComputeArcLengthDistance(samples []TelemetrySample) []float64 {
 		dy := samples[i].Y - samples[i-1].Y
 		step := math.Hypot(dx, dy)
 		if step == 0 {
-			// Fallback to telemetry step if X,Y coordinates are static
 			step = samples[i].Distance - samples[i-1].Distance
 			if step <= 0 {
-				step = 8.5 // ~8.5m per frame nominal distance tick
+				step = 8.537
 			}
 		}
 		dist[i] = dist[i-1] + step
@@ -47,14 +46,18 @@ func ResampleLinear(samples []TelemetrySample, srcDist []float64, gridStep float
 		return nil
 	}
 
-	numSteps := int(maxDist/gridStep) + 1
+	numSteps := int(maxDist / gridStep)
+	if numSteps <= 0 {
+		return nil
+	}
+
 	result := make([]ResampledPoint, numSteps)
 
 	srcIdx := 0
 	for i := 0; i < numSteps; i++ {
 		targetDist := float64(i) * gridStep
 
-		for srcIdx < len(srcDist)-1 && srcDist[srcIdx+1] < targetDist {
+		for srcIdx < len(srcDist)-1 && srcDist[srcIdx+1] <= targetDist {
 			srcIdx++
 		}
 

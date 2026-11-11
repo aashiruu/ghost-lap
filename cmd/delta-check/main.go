@@ -43,14 +43,15 @@ func main() {
 	deltas, finishDelta, absErr := telemetry.ComputeDistanceDelta(rusGrid, hamGrid, officialDelta)
 
 	fmt.Println("=== STAGE 4 DELTA & GROUND TRUTH VALIDATION ===")
-	fmt.Printf("Official Ground Truth Gap : +%.4f s (RUS %.3fs vs HAM %.3fs)\n", officialDelta, rusLap.OfficialLapTime, hamLap.OfficialLapTime)
-	fmt.Printf("Computed Finish Line Delta: +%.4f s\n", finishDelta)
-	fmt.Printf("Absolute Delta Error      : %.4f s (%.2f ms)\n", absErr, absErr*1000)
+	fmt.Printf("Total Spatial Delta Samples: %d points\n", len(deltas))
+	fmt.Printf("Official Ground Truth Gap  : +%.4f s (RUS %.3fs vs HAM %.3fs)\n", officialDelta, rusLap.OfficialLapTime, hamLap.OfficialLapTime)
+	fmt.Printf("Computed Finish Line Delta : +%.4f s\n", finishDelta)
+	fmt.Printf("Absolute Delta Error       : %.4f s (%.2f ms)\n", absErr, absErr*1000)
 
 	tolerance := 0.050 // 50ms tolerance
 	if absErr <= tolerance {
 		fmt.Printf("Status                     : VERIFIED (Within %.0fms tolerance)\n", tolerance*1000)
 	} else {
-		fmt.Printf("Status                     : WARNING (Exceeds %.0fms tolerance, investigation needed)\n", tolerance*1000)
+		fmt.Printf("Status                     : WARNING (Exceeds %.0fms tolerance)\n", tolerance*1000)
 	}
 }

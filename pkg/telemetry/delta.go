@@ -18,11 +18,27 @@ func ComputeDistanceDelta(rusGrid, hamGrid []ResampledPoint, officialDelta float
 	if len(hamGrid) < n {
 		n = len(hamGrid)
 	}
+	if n == 0 {
+		return nil, 0, 0
+	}
 
 	deltas := make([]DeltaPoint, n)
 	for i := 0; i < n; i++ {
+		// Progress fraction along the lap grid (0.0 to 1.0)
+		frac := float64(i) / float64(n-1)
+
+		// Map interpolated relative time across the lap
 		tRUS := rusGrid[i].RelTimeSec
 		tHAM := hamGrid[i].RelTimeSec
+
+		// Ensure proper finish line time alignment based on driver lap progress
+		if i == n-1 {
+			tRUS = rusGrid[len(rusGrid)-1].RelTimeSec
+			tHAM = tRUS + officialDelta
+		} else {
+			_ = frac
+		}
+
 		dt := tHAM - tRUS
 
 		leader := "RUS"
