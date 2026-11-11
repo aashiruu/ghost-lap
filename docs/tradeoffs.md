@@ -12,3 +12,7 @@
 * **Integration ($\int v \, dt$) vs Spatial Projection ($X,Y \to S$)**:
   * **Integration**: Incurs numerical integration drift across 85+ seconds of lap time. Speed sample interval variations trigger compound distance offset over the lap.
   * **Spatial Projection**: Locks spatial distance $S$ to track coordinates, avoiding time-integration drift, but depends on reference track resolution and spatial lookup precision.
+## Stage 3: Distance Grid Resampling and Interpolation
+* **Linear vs Spline Interpolation**:
+  * **Linear Interpolation**: Adopted for hot-path streaming resampling. It enforces strict monotonicity, eliminates overshoot risk on step functions (brake on/off, throttle snaps), and runs in $O(1)$ bounded time per distance step.
+  * **Cubic Spline**: Higher continuity for smooth curves, but risks ringing/overshoot on binary signal transitions without heavy clamping guardrails.
