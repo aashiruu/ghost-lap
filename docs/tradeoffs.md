@@ -1,6 +1,6 @@
 # Architectural Trade-Offs and Decisions
 
-## Stage 0: Telemetry Ingestion & Serialization
+## Stage 0: Telemetry Ingestion and Serialization
 * **Decision**: Offline JSON export via FastF1 wrapper instead of direct live timing stream.
 * **Trade-Off**: Eliminates network failure noise and remote rate-limiting during local pipeline testing at the cost of requiring a local Python pre-processing step.
 * **Data Granularity**: FastF1 merges channels into ~8 Hz non-uniform streams. We accept non-uniform sampling intervals in the raw stream and defer uniform grid resampling to Stage 3.
@@ -8,3 +8,7 @@
 * **Decision**: Single topic (`telemetry-raw`) with driver code as partition key (`RUS`, `HAM`) and time-delta ticker delay scaling.
 * **Trade-Off**: Pushing merged driver telemetry over local Redpanda socket introduces ~1-2ms per-sample network overhead compared to pure memory slices, but guarantees isolated partition consumption and realistic streaming event semantics.
 * **Replay Control**: Configurable multiplier (`-speed=1.0`, `-speed=5.0`) scales target sleep delays accurately down to sub-millisecond precision.
+## Stage 2: Track Distance Alignment Trade-Offs
+* **Integration ($\int v \, dt$) vs Spatial Projection ($X,Y \to S$)**:
+  * **Integration**: Incurs numerical integration drift across 85+ seconds of lap time. Speed sample interval variations trigger compound distance offset over the lap.
+  * **Spatial Projection**: Locks spatial distance $S$ to track coordinates, avoiding time-integration drift, but depends on reference track resolution and spatial lookup precision.
