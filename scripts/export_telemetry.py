@@ -2,76 +2,80 @@
 import json
 import os
 import sys
+from datetime import datetime, timedelta
 import requests
 
-# 2024 Silverstone Qualifying Q3 Session Key on OpenF1: 9558
-# Driver 63 = RUS (George Russell - Pole 1:25.819)
-# Driver 44 = HAM (Lewis Hamilton - P2 1:25.990)
-
-SESSION_KEY = "9558"
+SESSION_KEY = "9558"  # 2024 Silverstone Qualifying
 DRIVERS = {
-    "RUS": {"driver_number": 63, "lap_time": 85.819},
-    "HAM": {"driver_number": 44, "lap_time": 85.990}
+    "RUS": 63,
+    "HAM": 44,
 }
 
-os.makedirs('data', exist_ok=True)
+os.makedirs("data", exist_ok=True)
 
-print("Fetching lap telemetry directly via OpenF1 API (2024 Silverstone Q3)...")
+for code, d_num in DRIVERS.items():
+    laps_url = f"https://api.openf1.org/v1/laps?session_key={SESSION_KEY}&driver_number={d_num}"
+    laps = [l for l in requests.get(laps_url).json() if l.get("lap_duration") and not l.get("is_pit_out_lap")]
+    fastest = min(laps, key=lambda l: l["lap_duration"])
 
-for code, meta in DRIVERS.items():
-    d_num = meta["driver_number"]
-    print(f"Exporting telemetry for {code} (Car #{d_num})...")
+    t_start = datetime.fromisoformat(fastest["date_start"].replace("Z", "+00:00"))
+    lap_dur = float(fastest["lap_duration"])
+    t_end = t_start + timedelta(seconds=lap_dur)
 
-    # Query location samples
-    loc_url = f"https://api.openf1.org/v1/location?session_key={SESSION_KEY}&driver_number={d_num}"
+    iso_start = t_start.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    iso_end = t_end.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    car_url = (
+        f"https://api.openf1.org/v1/car_data?session_key={SESSION_KEY}&driver_number={d_num}"
+        f"&date>={iso_start}&date<={iso_end}"
+    )
+    loc_url = (
+        f"https://api.openf1.org/v1/location?session_key={SESSION_KEY}&driver_number={d_num}"
+        f"&date>={iso_start}&date<={iso_end}"
+    )
+    car_res = requests.get(car_url).json()
     loc_res = requests.get(loc_url).json()
 
-    # Query car telemetry samples (speed, throttle, brake, gear)
-    car_url = f"https://api.openf1.org/v1/car_data?session_key={SESSION_KEY}&driver_number={d_num}"
-    car_res = requests.get(car_url).json()
-
-    if not loc_res or not car_res:
-        print(f"Failed to fetch data for driver {code}")
+    if not car_res or not loc_res:
+        print(f"Failed to fetch lap window for {code}")
         sys.exit(1)
 
-    # Filter to lap timeframe & merge streams
-    # Truncate to the fastest lap span (~85.8s for RUS, ~85.9s for HAM)
-    sample_count = min(len(loc_res), len(car_res))
-    
-    # Calculate relative time offset
-    t0_str = loc_res[0]["date"]
-    
+    # Nearest-timestamp merge between ~3.7 Hz car_data and ~3.7 Hz location
+    loc_times = [datetime.fromisoformat(x["date"].replace("Z", "+00:00")).timestamp() for x in loc_res]
     samples = []
-    t_start = None
+    cum_dist = 0.0
+    prev_t = None
 
-    # Merge location (X, Y, Z) and car telemetry (Speed, Throttle, Brake, Gear)
-    for i in range(min(690, sample_count)):
-        loc = loc_res[i]
-        car = car_res[i]
+    for c in car_res:
+        ct = datetime.fromisoformat(c["date"].replace("Z", "+00:00")).timestamp()
+        rel_t = max(0.0, ct - t_start.timestamp())
+        if prev_t is not None:
+            dt = ct - prev_t
+            cum_dist += (float(c.get("speed", 0)) / 3.6) * dt
+        prev_t = ct
 
-        # Derive seconds from frame timestamp delta
-        t_sec = i * 0.1248 # ~8.01 Hz average interval matching Silverstone Q3 telemetry
+        # Closest location frame
+        best_idx = min(range(len(loc_times)), key=lambda i: abs(loc_times[i] - ct))
+        loc = loc_res[best_idx]
 
         samples.append({
-            "rel_time_sec": round(t_sec, 4),
-            "date": loc.get("date", ""),
-            "speed": float(car.get("speed", 0)),
-            "throttle": float(car.get("throttle", 0)),
-            "brake": bool(car.get("brake", False)),
-            "gear": int(car.get("n_gear", 0)),
+            "rel_time_sec": round(rel_t, 4),
+            "date": c["date"],
+            "speed": float(c.get("speed", 0)),
+            "throttle": float(c.get("throttle", 0)),
+            "brake": int(c.get("brake", 0)) > 0,
+            "gear": int(c.get("n_gear", 0)),
             "x": float(loc.get("x", 0)),
             "y": float(loc.get("y", 0)),
             "z": float(loc.get("z", 0)),
-            "distance": float(i * 8.5) # Approximate distance tick (resampled in Stage 2/3)
+            "distance": round(cum_dist, 3),
         })
 
-    out_data = {
-        "official_lap_time": meta["lap_time"],
+    out = {
+        "official_lap_time": lap_dur,
         "sample_count": len(samples),
-        "samples": samples
+        "samples": samples,
     }
-
     with open(f"data/{code}_lap.json", "w") as f:
-        json.dump(out_data, f, indent=2)
-
-print("Telemetry export complete.")
+        json.dump(out, f, indent=2)
+    print(f"Exported {code}: {len(samples)} samples over {lap_dur:.3f}s")

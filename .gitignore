@@ -7,3 +7,5 @@ data/*.csv
 bin/
 *.exe
 *.test
+
+web/replay_data.json

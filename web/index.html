@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ghost-lap | Historical Telemetry Replay</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    header {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 12px;
+    }
+    .badge {
+      background: #1f2428;
+      border: 1px solid #30363d;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .hud {
+      width: 100%;
+      max-width: 960px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .card-label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+    .card-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
+    .rus { color: #3fb950; }
+    .ham { color: #58a6ff; }
+    canvas {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      width: 100%;
+      max-width: 960px;
+      height: 520px;
+    }
+    .controls {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 600;
+    }
+    button.secondary { background: #30363d; }
+    input[type="range"] { flex: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h2>ghost-lap // Historical Telemetry Comparison</h2>
+      <div id="session-title" style="font-size:12px;color:#8b949e;margin-top:4px;">Loading...</div>
+    </div>
+    <span class="badge">HISTORICAL REPLAY &bull; NON-COMMERCIAL LEARNING PROJECT</span>
+  </header>
+
+  <div class="hud">
+    <div class="card">
+      <div class="card-label">Track Distance</div>
+      <div class="card-val" id="hud-dist">0 m</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Leader &amp; Live Gap</div>
+      <div class="card-val" id="hud-delta">+0.000 s</div>
+    </div>
+    <div class="card">
+      <div class="card-label">RUS Speed (Green)</div>
+      <div class="card-val rus" id="hud-rus-spd">0 km/h</div>
+    </div>
+    <div class="card">
+      <div class="card-label">HAM Speed (Blue)</div>
+      <div class="card-val ham" id="hud-ham-spd">0 km/h</div>
+    </div>
+  </div>
+
+  <canvas id="trackCanvas" width="960" height="520"></canvas>
+
+  <div class="controls">
+    <button id="btn-toggle">Pause</button>
+    <button id="btn-speed" class="secondary">Speed: 2x</button>
+    <input type="range" id="scrubber" min="0" max="100" value="0" />
+  </div>
+
+  <script>
+    const canvas = document.getElementById('trackCanvas');
+    const ctx = canvas.getContext('2d');
+    let data = null;
+    let frameIdx = 0;
+    let playing = true;
+    let speedMult = 2;
+    let bounds = null;
+
+    function computeBounds(frames) {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const f of frames) {
+        minX = Math.min(minX, f.rus_x, f.ham_x);
+        maxX = Math.max(maxX, f.rus_x, f.ham_x);
+        minY = Math.min(minY, f.rus_y, f.ham_y);
+        maxY = Math.max(maxY, f.rus_y, f.ham_y);
+      }
+      const pad = 48;
+      const spanX = Math.max(maxX - minX, 1);
+      const spanY = Math.max(maxY - minY, 1);
+      const scale = Math.min((canvas.width - pad * 2) / spanX, (canvas.height - pad * 2) / spanY);
+      const offsetX = (canvas.width - spanX * scale) / 2 - minX * scale;
+      const offsetY = (canvas.height - spanY * scale) / 2 - minY * scale;
+      return { scale, offsetX, offsetY };
+    }
+
+    function toCanvas(x, y) {
+      return {
+        cx: x * bounds.scale + bounds.offsetX,
+        cy: canvas.height - (y * bounds.scale + bounds.offsetY)
+      };
+    }
+
+    function drawFrame(idx) {
+      if (!data) return;
+      const frames = data.frames;
+      const f = frames[idx];
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Track outline
+      ctx.beginPath();
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 10;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let i = 0; i < frames.length; i += 4) {
+        const pt = toCanvas(frames[i].rus_x, frames[i].rus_y);
+        if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+        else ctx.lineTo(pt.cx, pt.cy);
+      }
+      ctx.closePath();
+      ctx.stroke();
+
+      // Start/Finish marker
+      const sf = toCanvas(frames[0].rus_x, frames[0].rus_y);
+      ctx.fillStyle = '#f0883e';
+      ctx.fillRect(sf.cx - 3, sf.cy - 12, 6, 24);
+
+      // Visual separation offset proportional to delta so dots visibly lead/trail on track
+      const rusPt = toCanvas(f.rus_x, f.rus_y);
+      const hamLeadIdx = Math.max(0, Math.min(frames.length - 1, Math.round(idx - f.delta_sec * 65)));
+      const hamPt = toCanvas(frames[hamLeadIdx].ham_x, frames[hamLeadIdx].ham_y);
+
+      // Draw HAM dot (Blue)
+      ctx.beginPath();
+      ctx.fillStyle = '#58a6ff';
+      ctx.arc(hamPt.cx, hamPt.cy, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw RUS dot (Green)
+      ctx.beginPath();
+      ctx.fillStyle = '#3fb950';
+      ctx.arc(rusPt.cx, rusPt.cy, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Update HUD
+      document.getElementById('hud-dist').textContent = `${Math.round(f.distance)} m`;
+      const absGap = Math.abs(f.delta_sec).toFixed(3);
+      const deltaEl = document.getElementById('hud-delta');
+      deltaEl.textContent = `${f.leader_code} +${absGap} s`;
+      deltaEl.className = 'card-val ' + (f.leader_code === 'RUS' ? 'rus' : 'ham');
+      document.getElementById('hud-rus-spd').textContent = `${Math.round(f.speed_rus)} km/h`;
+      document.getElementById('hud-ham-spd').textContent = `${Math.round(f.speed_ham)} km/h`;
+      document.getElementById('scrubber').value = idx;
+    }
+
+    function tick() {
+      if (data && playing) {
+        frameIdx = (frameIdx + speedMult * 3) % data.frames.length;
+        drawFrame(Math.floor(frameIdx));
+      }
+      requestAnimationFrame(tick);
+    }
+
+    document.getElementById('btn-toggle').onclick = () => {
+      playing = !playing;
+      document.getElementById('btn-toggle').textContent = playing ? 'Pause' : 'Play';
+    };
+
+    document.getElementById('btn-speed').onclick = () => {
+      speedMult = speedMult === 1 ? 2 : speedMult === 2 ? 5 : 1;
+      document.getElementById('btn-speed').textContent = `Speed: ${speedMult}x`;
+    };
+
+    document.getElementById('scrubber').oninput = (e) => {
+      playing = false;
+      document.getElementById('btn-toggle').textContent = 'Play';
+      frameIdx = Number(e.target.value);
+      drawFrame(frameIdx);
+    };
+
+    fetch('replay_data.json')
+      .then(r => r.json())
+      .then(json => {
+        data = json;
+        bounds = computeBounds(data.frames);
+        document.getElementById('session-title').textContent =
+          `${data.session} | RUS ${data.official_lap_a.toFixed(3)}s vs HAM ${data.official_lap_b.toFixed(3)}s`;
+        const scrubber = document.getElementById('scrubber');
+        scrubber.max = data.frames.length - 1;
+        drawFrame(0);
+        requestAnimationFrame(tick);
+      });
+  </script>
+</body>
+</html>
