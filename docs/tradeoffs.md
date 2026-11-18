@@ -19,3 +19,11 @@
 ## Stage 4: Delta and Ground-Truth Verification
 * **Finish Line Delta Match**: Time delta calculated at the final grid distance point ($S_{\text{finish}}$) must match official timing difference ($+0.171\text{s}$) within strict numerical bounds ($\le 50\text{ms}$).
 
+## Stage 5: Streaming Consumer Architecture
+* **State Ingestion & Incremental Resampling**:
+  * Telemetry frames are pushed into per-driver state buffers (`DriverStreamState`).
+  * As new spatial distance milestones are crossed, resampled 1m grid points are computed incrementally without re-processing previous frames.
+## Stage 6: Sample Loss Degradation & Resilience
+* **Reproducible Seeded Random Dropper**:
+  * Evaluated resilience against 5%, 10%, and 25% packet loss using PRNG seed `42`.
+  * Preserved lap boundary endpoints to test linear interpolation gap-bridging fidelity under non-uniform frame drops.

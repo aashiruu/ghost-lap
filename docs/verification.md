@@ -15,3 +15,9 @@
 ## Stage 3 Verification Log
 * Resampled telemetry streams for RUS and HAM onto a 1.0m uniform spatial grid.
 * Verified physical boundary compliance across all grid points: Throttle $\in [0, 100]\%$, Brake $\in [0, 1.0]$.
+## Stage 5 Streaming Consumer Verification Log
+* Ran incremental streaming simulation (`cmd/stream-check/main.go`).
+* Verified equivalence between incremental streaming output and Stage 4 batch processing ($0.0000\text{ms}$ divergence).
+## Stage 6 Verification Log
+* Executed reproducible sample loss test harness (`cmd/degrade-check/main.go`).
+* Measured finish line error and overall Mean Absolute Error (MAE) across 0%, 5%, 10%, and 25% drop rates.
