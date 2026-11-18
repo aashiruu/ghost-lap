@@ -27,3 +27,6 @@
 * **Reproducible Seeded Random Dropper**:
   * Evaluated resilience against 5%, 10%, and 25% packet loss using PRNG seed `42`.
   * Preserved lap boundary endpoints to test linear interpolation gap-bridging fidelity under non-uniform frame drops.
+## Stage 7: Feature-Based Track Segmentation
+* **Decision**: Partitioned the 5,856 m grid into 7 contiguous track segments rather than 3 coarse FIA sectors.
+* **Trade-Off**: Isolates corner-complex delta swings while enforcing boundary continuity ($S_{j,\text{end}} = S_{j+1,\text{start}}$) so segment deltas conserve the total lap gap (`0.000000 ms` conservation error).

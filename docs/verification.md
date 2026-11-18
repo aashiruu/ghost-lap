@@ -21,3 +21,6 @@
 ## Stage 6 Verification Log
 * Executed reproducible sample loss test harness (`cmd/degrade-check/main.go`).
 * Measured finish line error and overall Mean Absolute Error (MAE) across 0%, 5%, 10%, and 25% drop rates.
+## Stage 7 Segment Breakdown Verification Log
+* Executed `cmd/segment-check/main.go` across 7 contiguous Silverstone segments.
+* Verified segment telescoping sum equals `+0.1710 s` with `0.000000 ms` conservation error.
