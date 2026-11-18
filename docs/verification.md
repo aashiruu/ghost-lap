@@ -15,6 +15,9 @@
 ## Stage 3 Verification Log
 * Resampled telemetry streams for RUS and HAM onto a 1.0m uniform spatial grid.
 * Verified physical boundary compliance across all grid points: Throttle $\in [0, 100]\%$, Brake $\in [0, 1.0]$.
+## Stage 4: Delta & Ground-Truth Validation
+* Command: `go run cmd/delta-check/main.go`
+* Output: Computed finish-line delta `+0.1710 s` vs. official gap `+0.1710 s` (`0.0000 s` / `0.00 ms` error; status `VERIFIED`).
 ## Stage 5 Streaming Consumer Verification Log
 * Ran incremental streaming simulation (`cmd/stream-check/main.go`).
 * Verified equivalence between incremental streaming output and Stage 4 batch processing ($0.0000\text{ms}$ divergence).
@@ -24,6 +27,9 @@
 ## Stage 7 Segment Breakdown Verification Log
 * Executed `cmd/segment-check/main.go` across 7 contiguous Silverstone segments.
 * Verified segment telescoping sum equals `+0.1710 s` with `0.000000 ms` conservation error.
+## Stage 8: Track Replay View
+* Command: `go run cmd/replay-web/main.go -addr=:8080`
+* Output: Exported `5,856` aligned replay frames to `web/replay_data.json` (`finish_delta: +0.1710 s`) and verified animated two-driver track rendering with live HUD delta readout in `web/index.html`.
 ## Stage 9: Observability (Prometheus & Grafana)
 * Commands: `go build -o bin/observer cmd/observer/main.go` and `curl -s http://localhost:9090/metrics | grep '^ghostlap_'`
 * Measured compiled pipeline pass: `processed 690 RUS + 690 HAM frames in 23.8878 ms (delta error: 0.000000 s)`
