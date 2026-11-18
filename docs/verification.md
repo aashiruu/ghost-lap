@@ -24,3 +24,14 @@
 ## Stage 7 Segment Breakdown Verification Log
 * Executed `cmd/segment-check/main.go` across 7 contiguous Silverstone segments.
 * Verified segment telescoping sum equals `+0.1710 s` with `0.000000 ms` conservation error.
+## Stage 9: Observability (Prometheus & Grafana)
+* Commands: `go build -o bin/observer cmd/observer/main.go` and `curl -s http://localhost:9090/metrics | grep '^ghostlap_'`
+* Measured compiled pipeline pass: `processed 690 RUS + 690 HAM frames in 23.8878 ms (delta error: 0.000000 s)`
+* Verified Prometheus metrics exposed at `GET /metrics`:
+  * `ghostlap_frames_processed_total{driver="RUS"}` = `690`
+  * `ghostlap_frames_processed_total{driver="HAM"}` = `690`
+  * `ghostlap_consumer_lag_records{driver="RUS"}` = `0`
+  * `ghostlap_consumer_lag_records{driver="HAM"}` = `0`
+  * `ghostlap_delta_error_vs_official_seconds` = `0`
+  * `ghostlap_resample_duration_seconds_sum` = `0.027466999` (`count = 1`, bucket `le="0.0512"` = `1`)
+* Verified Grafana dashboard configuration (`deploy/grafana-dashboard.json`), Prometheus scrape target (`deploy/prometheus.yml`), and stack compose file (`deploy/docker-compose.yml`).

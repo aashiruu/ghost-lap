@@ -30,3 +30,9 @@
 ## Stage 7: Feature-Based Track Segmentation
 * **Decision**: Partitioned the 5,856 m grid into 7 contiguous track segments rather than 3 coarse FIA sectors.
 * **Trade-Off**: Isolates corner-complex delta swings while enforcing boundary continuity ($S_{j,\text{end}} = S_{j+1,\text{start}}$) so segment deltas conserve the total lap gap (`0.000000 ms` conservation error).
+## Stage 8: Static HTML5 Canvas Track Replay View
+* **Decision**: Export aligned 1 m replay frames to `web/replay_data.json` and render on a dependency-free HTML5 `<canvas>` served via Go `net/http`.
+* **Trade-Off**: Decouples 60 FPS browser rendering from Redpanda consumer backpressure without frontend build toolchains, at the cost of regenerating the replay payload when input laps change.
+## Stage 9: Bounded-Cardinality Prometheus Observability
+* **Decision**: Expose `/metrics` via `prometheus/client_golang` using strictly bounded enum labels (`driver` $\in \{\text{RUS}, \text{HAM}\}$, cardinality 2) and serve high-resolution 1.0 m trace arrays over a separate JSON endpoint (`/api/trace`) for Grafana plotting.
+* **Trade-Off**: Using `distance` (`5,856` steps) as a Prometheus label would explode TSDB series count and memory usage. Separating low-cardinality operational metrics (`< 15` total series) from JSON trace data keeps Prometheus scraping lightweight while preserving 1.0 m resolution in Grafana.
