@@ -1,0 +1,64 @@
+{
+  "title": "ghost-lap Telemetry Alignment & Pipeline Observability",
+  "uid": "ghost-lap-obs",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Frames Processed Total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "ghostlap_frames_processed_total", "legendFormat": "{{driver}}" }]
+    },
+    {
+      "id": 2,
+      "title": "Consumer Lag (Records)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "ghostlap_consumer_lag_records", "legendFormat": "{{driver}}" }]
+    },
+    {
+      "id": 3,
+      "title": "Resample Duration (ms)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "ghostlap_resample_duration_seconds_sum * 1000", "legendFormat": "Duration (ms)" }]
+    },
+    {
+      "id": 4,
+      "title": "Delta Error vs Official (ms)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "ghostlap_delta_error_vs_official_seconds * 1000", "legendFormat": "Error (ms)" }]
+    },
+    {
+      "id": 5,
+      "title": "Speed Traces Overlaid by Distance (km/h)",
+      "type": "xychart",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "datasource": { "type": "yesoreyeram-infinity-datasource" },
+          "url": "http://host.docker.internal:9090/api/trace",
+          "type": "json",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Cumulative Time Delta Along Lap (s)",
+      "type": "xychart",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "datasource": { "type": "yesoreyeram-infinity-datasource" },
+          "url": "http://host.docker.internal:9090/api/trace",
+          "type": "json",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}
