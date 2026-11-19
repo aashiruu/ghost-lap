@@ -37,10 +37,10 @@ jobs:
         run: |
           ./bin/distance-check
           ./bin/resample-check
-          ./bin/delta-check | grep "Status                     : VERIFIED"
-          ./bin/stream-check | grep "Status                             : VERIFIED"
+          ./bin/delta-check | tee /dev/stderr | grep -qE "Status[[:space:]]+:[[:space:]]+VERIFIED"
+          ./bin/stream-check | tee /dev/stderr | grep -qE "Status[[:space:]]+:[[:space:]]+VERIFIED"
           ./bin/degrade-check
-          ./bin/segment-check | grep "Conservation Error    : 0.000000 ms"
+          ./bin/segment-check | tee /dev/stderr | grep -qE "Conservation Error[[:space:]]+:[[:space:]]+0\.000000 ms"
 
       - name: Verify Prometheus /metrics and /api/trace endpoints
         run: |
