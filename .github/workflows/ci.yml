@@ -1,0 +1,62 @@
+name: ghost-lap CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate deterministic telemetry fixtures
+        run: python3 scripts/generate_ci_fixtures.py
+
+      - name: Build all Go commands
+        run: |
+          mkdir -p bin
+          for cmd in producer distance-check resample-check delta-check stream-check degrade-check segment-check replay-web observer; do
+            go build -o bin/$cmd ./cmd/$cmd
+          done
+
+      - name: Run alignment, delta, streaming, degradation, and segment checks
+        run: |
+          ./bin/distance-check
+          ./bin/resample-check
+          ./bin/delta-check | grep "Status                     : VERIFIED"
+          ./bin/stream-check | grep "Status                             : VERIFIED"
+          ./bin/degrade-check
+          ./bin/segment-check | grep "Conservation Error    : 0.000000 ms"
+
+      - name: Verify Prometheus /metrics and /api/trace endpoints
+        run: |
+          ./bin/observer -addr=:9090 &
+          OBS_PID=$!
+          sleep 0.5
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="RUS"} 690'
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="HAM"} 690'
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_delta_error_vs_official_seconds 0'
+          curl -fsS http://localhost:9090/api/trace | head -c 200 | grep -q '"distance"'
+          kill $OBS_PID
+
+      - name: Verify documentation cross-links and scope honesty
+        run: |
+          test -f README.md
+          test -f docs/tradeoffs.md
+          test -f docs/alignment-testing.md
+          test -f docs/verification.md
+          ! grep -rnE "enterprise-grade|production-ready" README.md docs/
