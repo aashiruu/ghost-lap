@@ -41,3 +41,7 @@
   * `ghostlap_delta_error_vs_official_seconds` = `0`
   * `ghostlap_resample_duration_seconds_sum` = `0.027466999` (`count = 1`, bucket `le="0.0512"` = `1`)
 * Verified Grafana dashboard configuration (`deploy/grafana-dashboard.json`), Prometheus scrape target (`deploy/prometheus.yml`), and stack compose file (`deploy/docker-compose.yml`).
+
+## Visual Evidence
+* **Track Replay View**: ![Track Replay View](screenshots/track-replay.png)
+* **Prometheus Metrics Endpoint**: ![Prometheus Metrics](screenshots/prometheus-metrics.png)
