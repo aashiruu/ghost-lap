@@ -31,7 +31,7 @@ graph TD
 
 - [Spatial Alignment & Validation Proofs](docs/alignment-testing.md): Empirical comparison of distance methods (`14.040 m` integration drift vs. `0.000 m` grid projection), ground-truth lap delta validation (`+0.1710 s` official gap, `0.00 ms` finish error), seeded sample-loss degradation (`5%`, `10%`, `25%`), and 7-segment gap breakdown.
 
-- [Verification & Execution Log: Reproducible CLI commands, raw terminal measurements, and verification checks across Stages 0 through 9.
+- [Verification & Execution Log](docs/verification.md): Reproducible CLI commands, raw terminal measurements, and verification checks across Stages 0 through 9.
 
 ## Setup & Reproduction
 ### Prerequisites
