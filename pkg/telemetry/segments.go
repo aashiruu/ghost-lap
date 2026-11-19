@@ -40,14 +40,26 @@ func ComputeSegmentDeltas(rusGrid, hamGrid []ResampledPoint, rusTimes, hamTimes 
 		maxIdx = len(hamTimes) - 1
 	}
 
+	// Scale segment meter boundaries if track perimeter differs from 5856m
+	scale := 1.0
+	if len(segments) > 0 && segments[len(segments)-1].EndDist > 0 && float64(maxIdx) < segments[len(segments)-1].EndDist {
+		scale = float64(maxIdx) / segments[len(segments)-1].EndDist
+	}
+
 	results := make([]SegmentResult, len(segments))
 	var sumSegmentDiff float64
 
 	for i, seg := range segments {
-		startIdx := int(math.Round(seg.StartDist))
-		endIdx := int(math.Round(seg.EndDist))
+		startIdx := int(math.Round(seg.StartDist * scale))
+		endIdx := int(math.Round(seg.EndDist * scale))
 		if startIdx < 0 {
 			startIdx = 0
+		}
+		if startIdx > maxIdx {
+			startIdx = maxIdx
+		}
+		if endIdx < startIdx {
+			endIdx = startIdx
 		}
 		if endIdx > maxIdx {
 			endIdx = maxIdx
