@@ -1,38 +1,37 @@
+
 # Architectural Trade-Offs and Decisions
 
 ## Stage 0: Telemetry Ingestion and Serialization
-* **Decision**: Offline JSON export via FastF1 wrapper instead of direct live timing stream.
-* **Trade-Off**: Eliminates network failure noise and remote rate-limiting during local pipeline testing at the cost of requiring a local Python pre-processing step.
-* **Data Granularity**: FastF1 merges channels into ~8 Hz non-uniform streams. We accept non-uniform sampling intervals in the raw stream and defer uniform grid resampling to Stage 3.
-## Stage 1: Replay Producer Strategy
-* **Decision**: Single topic (`telemetry-raw`) with driver code as partition key (`RUS`, `HAM`) and time-delta ticker delay scaling.
-* **Trade-Off**: Pushing merged driver telemetry over local Redpanda socket introduces ~1-2ms per-sample network overhead compared to pure memory slices, but guarantees isolated partition consumption and realistic streaming event semantics.
-* **Replay Control**: Configurable multiplier (`-speed=1.0`, `-speed=5.0`) scales target sleep delays accurately down to sub-millisecond precision.
-## Stage 2: Track Distance Alignment Trade-Offs
-* **Integration ($\int v \, dt$) vs Spatial Projection ($X,Y \to S$)**:
-  * **Integration**: Incurs numerical integration drift across 85+ seconds of lap time. Speed sample interval variations trigger compound distance offset over the lap.
-  * **Spatial Projection**: Locks spatial distance $S$ to track coordinates, avoiding time-integration drift, but depends on reference track resolution and spatial lookup precision.
-## Stage 3: Distance Grid Resampling and Interpolation
-* **Linear vs Spline Interpolation**:
-  * **Linear Interpolation**: Adopted for hot-path streaming resampling. It enforces strict monotonicity, eliminates overshoot risk on step functions (brake on/off, throttle snaps), and runs in $O(1)$ bounded time per distance step.
-  * **Cubic Spline**: Higher continuity for smooth curves, but risks ringing/overshoot on binary signal transitions without heavy clamping guardrails.
-## Stage 4: Delta and Ground-Truth Verification
-* **Finish Line Delta Match**: Time delta calculated at the final grid distance point ($S_{\text{finish}}$) must match official timing difference ($+0.171\text{s}$) within strict numerical bounds ($\le 50\text{ms}$).
+* **Decision**: Offline JSON export via OpenF1 REST endpoints (`/v1/sessions`, `/v1/laps`, `/v1/car_data`, `/v1/location`) with a `0.5 s` boundary pad around each driver's fastest Q3 lap (`session_key=9554`), trimmed to `[0.0 s, official_lap_time]` via linear boundary interpolation (`TrimToOfficialLapWindow`).
+* **Trade-Off**: Eliminates upstream rate-limiting and network jitter during pipeline testing while preserving exact lap start/finish boundary anchoring (`RUS`: `324` trimmed samples; `HAM`: `335` trimmed samples from `338` buffered samples).
+* **Data Granularity**: OpenF1 `car_data` and `location` sample asynchronously at `~3.8 Hz` (`3.74 Hz` for `RUS`, `3.88 Hz` for `HAM`). Non-uniform sample intervals are preserved during ingestion and resampled onto a uniform spatial grid in Stage 3.
 
-## Stage 5: Streaming Consumer Architecture
-* **State Ingestion & Incremental Resampling**:
-  * Telemetry frames are pushed into per-driver state buffers (`DriverStreamState`).
-  * As new spatial distance milestones are crossed, resampled 1m grid points are computed incrementally without re-processing previous frames.
-## Stage 6: Sample Loss Degradation & Resilience
-* **Reproducible Seeded Random Dropper**:
-  * Evaluated resilience against 5%, 10%, and 25% packet loss using PRNG seed `42`.
-  * Preserved lap boundary endpoints to test linear interpolation gap-bridging fidelity under non-uniform frame drops.
+## Stage 1 & Stage 5: Redpanda Replay Producer & Consumer
+* **Decision**: Single topic (`telemetry-raw`) keyed by driver code (`RUS`, `HAM`) with configurable time-delta replay scaling in `cmd/producer` and incremental stateful consumption (`DriverStreamState`) in `cmd/consumer`.
+* **Trade-Off**: Emitting frame-by-frame over a local Redpanda broker adds ~1–2 ms of socket overhead compared to in-memory slices, but enforces partition ordering and verifies that incremental streaming produces identical `1.0 m` grid points (`0.0000 ms` divergence) to batch processing.
+
+## Stage 2: Track Distance Alignment Trade-Offs
+* **Speed Integration ($\int v \, dt$) vs. 2D Arc-Length Projection ($X, Y \to S$)**:
+  * **Speed Integration**: Converts `km/h` to `m/s` (`/ 3.6`) and integrates over sample `dt`, yielding `5828.112 m` (`RUS`) and `5825.070 m` (`HAM`) with `3.042 m` inter-driver drift from trapezoidal approximation across `~260 ms` intervals.
+  * **2D Arc-Length Projection**: Converts OpenF1 `location` coordinates from decimeters to meters (`math.Hypot(dx, dy) / 10.0`), yielding `5828.725 m` (`RUS`) and `5823.350 m` (`HAM`). The `5.376 m` difference reflects genuine racing-line variation across the 5.891 km Silverstone circuit.
+
+## Stage 3: Distance Grid Resampling and Interpolation
+* **Linear vs. Cubic Spline Interpolation**:
+  * **Linear Interpolation**: Adopted for streaming resampling (`ResampleLinear`). Enforces strict monotonicity on `RelTimeSec`, prevents overshoot on binary step inputs (brake on/off, throttle snaps), and executes in $O(1)$ amortized time per `1.0 m` step (`0` throttle or brake overshoots).
+  * **Cubic Spline**: Smooths continuous curves but introduces ringing/overshoot across step transitions unless heavily clamped.
+
+## Stage 4: Uncalibrated Delta vs. Official Ground Truth
+* **Decision**: Compute `DeltaSec = time_ham(S) - time_rus(S)` directly from each sample's interpolated timestamp and arc-length distance without finish-line tail calibration.
+* **Trade-Off**: Avoids circular validation (`0.0000 s` forced error). Comparing at the overlapping grid end (`5823 m`) yields `+0.2560 s` vs. the official transponder gap of `+0.1710 s` (`84.99 ms` difference), directly attributable to `~3.8 Hz` linear interpolation and `HAM`'s `5.376 m` shorter geometric path.
+
+## Stage 6: Sample-Loss Degradation Testing
+* **Decision**: Seeded PRNG (`seed = 42`) drops intermediate telemetry samples at `5%`, `10%`, and `25%` while anchoring lap start and finish boundary samples.
+* **Trade-Off**: Isolates interior interpolation degradation (`3.87 ms`, `13.29 ms`, and `52.41 ms` MAE vs. the `0%` baseline) without conflating boundary extrapolation noise.
+
 ## Stage 7: Feature-Based Track Segmentation
-* **Decision**: Partitioned the 5,856 m grid into 7 contiguous track segments rather than 3 coarse FIA sectors.
-* **Trade-Off**: Isolates corner-complex delta swings while enforcing boundary continuity ($S_{j,\text{end}} = S_{j+1,\text{start}}$) so segment deltas conserve the total lap gap (`0.000000 ms` conservation error).
-## Stage 8: Static HTML5 Canvas Track Replay View
-* **Decision**: Export aligned 1 m replay frames to `web/replay_data.json` and render on a dependency-free HTML5 `<canvas>` served via Go `net/http`.
-* **Trade-Off**: Decouples 60 FPS browser rendering from Redpanda consumer backpressure without frontend build toolchains, at the cost of regenerating the replay payload when input laps change.
-## Stage 9: Bounded-Cardinality Prometheus Observability
-* **Decision**: Expose `/metrics` via `prometheus/client_golang` using strictly bounded enum labels (`driver` $\in \{\text{RUS}, \text{HAM}\}$, cardinality 2) and serve high-resolution 1.0 m trace arrays over a separate JSON endpoint (`/api/trace`) for Grafana plotting.
-* **Trade-Off**: Using `distance` (`5,856` steps) as a Prometheus label would explode TSDB series count and memory usage. Separating low-cardinality operational metrics (`< 15` total series) from JSON trace data keeps Prometheus scraping lightweight while preserving 1.0 m resolution in Grafana.
+* **Decision**: Partition the overlapping `5,823 m` grid into 7 contiguous corner complexes (`S1`–`S7`) and enforce physical average speed bounds (`35–90 m/s`) on all segments longer than `600 m`.
+* **Trade-Off**: Rejects constant-speed or garage-slice artifacts while preserving exact telescoping conservation (`0.000000 ms` difference between segment sum and total uncalibrated delta).
+
+## Stage 8 & Stage 9: Canvas Replay & Bounded-Cardinality Observability
+* **Decision**: Serve static replay frames (`web/replay_data.json`) over Go `net/http` (`:8080`), expose strictly bounded enum-labeled Prometheus metrics (`driver` $\in \{\text{RUS}, \text{HAM}\}$, cardinality 2) on `GET /metrics`, and serve high-resolution `1.0 m` trace arrays on `GET /api/trace` (`:9090`).
+* **Trade-Off**: Prevents Prometheus TSDB high-cardinality series explosion while keeping full `1.0 m` trace resolution available for Grafana panels.
