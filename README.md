@@ -75,4 +75,4 @@ go run cmd/replay-web/main.go -addr=:8080
 go run cmd/observer/main.go -addr=:9090
 ```
 ## Data Source and Attribution Note
-​Historical timing and car telemetry originate from public OpenF1 API records (`https://api.openf1.org/v1`) for the 2024 British Grand Prix Qualifying session (Silverstone, `session_key=9554`, July 6, 2024), used strictly for non-commercial personal learning in accordance with OpenF1's public data terms. Drivers are identified solely by three-letter timing codes (`RUS`, `HAM`). No Formula 1, FIA, or team logos, trademarks, or proprietary branding are included in this repository.
+​Historical timing and car telemetry originate from public OpenF1 API records (`https://api.openf1.org/v1`) for the 2024 British Grand Prix Qualifying session (Silverstone, `session_key=9554`, July 6, 2024), used strictly for non-commercial personal learning for non-commercial personal learning. Drivers are identified solely by three-letter timing codes (`RUS`, `HAM`). No Formula 1, FIA, or team logos, trademarks, or proprietary branding are included in this repository.
