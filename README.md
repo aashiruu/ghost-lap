@@ -1,4 +1,4 @@
-cat << 'EOF' > README.md
+
 # ghost-lap
 
 > **Disclaimer**: `ghost-lap` is a personal educational project that replays historical Formula 1 qualifying session telemetry as if it were live. It is not connected to a live car feed and must never be described as live telemetry or a race-strategy tool.
