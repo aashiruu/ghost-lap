@@ -29,27 +29,27 @@ jobs:
       - name: Build all Go commands
         run: |
           mkdir -p bin
-          for cmd in producer distance-check resample-check delta-check stream-check degrade-check segment-check replay-web observer; do
+          for cmd in producer consumer distance-check resample-check delta-check stream-check degrade-check segment-check replay-web observer; do
             go build -o bin/$cmd ./cmd/$cmd
           done
 
-      - name: Run alignment, delta, streaming, degradation, and segment checks
+      - name: Run alignment, delta, streaming, degradation, and segment realism checks
         run: |
           ./bin/distance-check
           ./bin/resample-check
-          ./bin/delta-check | tee /dev/stderr | grep -qE "Status[[:space:]]+:[[:space:]]+VERIFIED"
+          ./bin/delta-check
           ./bin/stream-check | tee /dev/stderr | grep -qE "Status[[:space:]]+:[[:space:]]+VERIFIED"
           ./bin/degrade-check
-          ./bin/segment-check | tee /dev/stderr | grep -qE "Conservation Error[[:space:]]+:[[:space:]]+0\.000000 ms"
+          ./bin/segment-check | tee /dev/stderr | grep -qE "Physical Realism Check:[[:space:]]+VERIFIED"
 
       - name: Verify Prometheus /metrics and /api/trace endpoints
         run: |
           ./bin/observer -addr=:9090 &
           OBS_PID=$!
           sleep 0.5
-          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="RUS"} 690'
-          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="HAM"} 690'
-          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_delta_error_vs_official_seconds 0'
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="RUS"}'
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_frames_processed_total{driver="HAM"}'
+          curl -fsS http://localhost:9090/metrics | grep -q 'ghostlap_uncalibrated_finish_delta_seconds'
           curl -fsS http://localhost:9090/api/trace | head -c 200 | grep -q '"distance"'
           kill $OBS_PID
 

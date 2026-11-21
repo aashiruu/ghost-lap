@@ -12,7 +12,7 @@ type DeltaPoint struct {
 	LeaderCode string  `json:"leader_code"`
 }
 
-// ComputeDistanceDelta calculates lap delta across resampled distance grids
+// ComputeDistanceDelta computes uncalibrated spatial time delta across the overlapping 1m grid.
 func ComputeDistanceDelta(rusGrid, hamGrid []ResampledPoint, officialDelta float64) ([]DeltaPoint, float64, float64) {
 	n := len(rusGrid)
 	if len(hamGrid) < n {
@@ -24,21 +24,8 @@ func ComputeDistanceDelta(rusGrid, hamGrid []ResampledPoint, officialDelta float
 
 	deltas := make([]DeltaPoint, n)
 	for i := 0; i < n; i++ {
-		// Progress fraction along the lap grid (0.0 to 1.0)
-		frac := float64(i) / float64(n-1)
-
-		// Map interpolated relative time across the lap
 		tRUS := rusGrid[i].RelTimeSec
 		tHAM := hamGrid[i].RelTimeSec
-
-		// Ensure proper finish line time alignment based on driver lap progress
-		if i == n-1 {
-			tRUS = rusGrid[len(rusGrid)-1].RelTimeSec
-			tHAM = tRUS + officialDelta
-		} else {
-			_ = frac
-		}
-
 		dt := tHAM - tRUS
 
 		leader := "RUS"

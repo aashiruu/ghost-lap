@@ -9,49 +9,42 @@ import (
 	"ghost-lap/pkg/telemetry"
 )
 
-func loadLap(path string) (*telemetry.LapExport, error) {
+func loadLap(path string) (*telemetry.LapExport, []telemetry.TelemetrySample, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var lap telemetry.LapExport
 	if err := json.Unmarshal(data, &lap); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &lap, nil
+	return &lap, telemetry.TrimToOfficialLapWindow(lap.Samples, lap.OfficialLapTime), nil
 }
 
 func main() {
-	rusLap, err := loadLap("data/RUS_lap.json")
+	rusLap, rusSamples, err := loadLap("data/RUS_lap.json")
 	if err != nil {
-		log.Fatalf("Failed to load RUS lap: %v", err)
+		log.Fatal(err)
+	}
+	hamLap, hamSamples, err := loadLap("data/HAM_lap.json")
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	hamLap, err := loadLap("data/HAM_lap.json")
-	if err != nil {
-		log.Fatalf("Failed to load HAM lap: %v", err)
-	}
+	rusGrid := telemetry.ResampleLinear(rusSamples, telemetry.ComputeArcLengthDistance(rusSamples), 1.0)
+	hamGrid := telemetry.ResampleLinear(hamSamples, telemetry.ComputeArcLengthDistance(hamSamples), 1.0)
 
-	rusArc := telemetry.ComputeArcLengthDistance(rusLap.Samples)
-	hamArc := telemetry.ComputeArcLengthDistance(hamLap.Samples)
-
-	gridStep := 1.0
-	rusGrid := telemetry.ResampleLinear(rusLap.Samples, rusArc, gridStep)
-	hamGrid := telemetry.ResampleLinear(hamLap.Samples, hamArc, gridStep)
-
-	officialDelta := hamLap.OfficialLapTime - rusLap.OfficialLapTime // +0.171s
+	officialDelta := hamLap.OfficialLapTime - rusLap.OfficialLapTime
 	deltas, finishDelta, absErr := telemetry.ComputeDistanceDelta(rusGrid, hamGrid, officialDelta)
 
-	fmt.Println("=== STAGE 4 DELTA & GROUND TRUTH VALIDATION ===")
-	fmt.Printf("Total Spatial Delta Samples: %d points\n", len(deltas))
-	fmt.Printf("Official Ground Truth Gap  : +%.4f s (RUS %.3fs vs HAM %.3fs)\n", officialDelta, rusLap.OfficialLapTime, hamLap.OfficialLapTime)
-	fmt.Printf("Computed Finish Line Delta : +%.4f s\n", finishDelta)
+	fmt.Println("=== STAGE 4 UNCALIBRATED DELTA & GROUND TRUTH VALIDATION ===")
+	fmt.Printf("Overlapping Grid Samples   : %d points (0 to %.0f m)\n", len(deltas), deltas[len(deltas)-1].Distance)
+	fmt.Printf("Official Ground Truth Gap  : %+.4f s (RUS %.3fs vs HAM %.3fs)\n", officialDelta, rusLap.OfficialLapTime, hamLap.OfficialLapTime)
+	fmt.Printf("Computed Finish Line Delta : %+.4f s (Uncalibrated)\n", finishDelta)
 	fmt.Printf("Absolute Delta Error       : %.4f s (%.2f ms)\n", absErr, absErr*1000)
-
-	tolerance := 0.050 // 50ms tolerance
-	if absErr <= tolerance {
-		fmt.Printf("Status                     : VERIFIED (Within %.0fms tolerance)\n", tolerance*1000)
+	if absErr <= 0.050 {
+		fmt.Println("Status                     : VERIFIED (Within 50ms tolerance)")
 	} else {
-		fmt.Printf("Status                     : WARNING (Exceeds %.0fms tolerance)\n", tolerance*1000)
+		fmt.Println("Status                     : WARNING (Exceeds 50ms tolerance)")
 	}
 }

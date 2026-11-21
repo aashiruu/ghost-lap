@@ -9,73 +9,59 @@ import (
 	"ghost-lap/pkg/telemetry"
 )
 
-func loadLap(path string) (*telemetry.LapExport, error) {
+func loadLap(path string) (*telemetry.LapExport, []telemetry.TelemetrySample, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var lap telemetry.LapExport
 	if err := json.Unmarshal(data, &lap); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &lap, nil
-}
-
-func integrateTimeFromSpeed(grid []telemetry.ResampledPoint, gridStep float64, officialLapTime float64) []float64 {
-	times := make([]float64, len(grid))
-	if len(grid) == 0 {
-		return times
-	}
-	var rawTotal float64
-	for i := 1; i < len(grid); i++ {
-		vMS := ((grid[i-1].Speed + grid[i].Speed) / 2.0) / 3.6
-		if vMS < 5.0 {
-			vMS = 5.0
-		}
-		rawTotal += gridStep / vMS
-		times[i] = rawTotal
-	}
-	if rawTotal > 0 {
-		scale := officialLapTime / rawTotal
-		for i := range times {
-			times[i] *= scale
-		}
-	}
-	return times
+	return &lap, telemetry.TrimToOfficialLapWindow(lap.Samples, lap.OfficialLapTime), nil
 }
 
 func main() {
-	rusLap, err := loadLap("data/RUS_lap.json")
+	rusLap, rusSamples, err := loadLap("data/RUS_lap.json")
 	if err != nil {
-		log.Fatalf("Failed to load RUS lap: %v", err)
+		log.Fatal(err)
 	}
-	hamLap, err := loadLap("data/HAM_lap.json")
+	hamLap, hamSamples, err := loadLap("data/HAM_lap.json")
 	if err != nil {
-		log.Fatalf("Failed to load HAM lap: %v", err)
+		log.Fatal(err)
 	}
 
-	gridStep := 1.0
-	rusArc := telemetry.ComputeArcLengthDistance(rusLap.Samples)
-	hamArc := telemetry.ComputeArcLengthDistance(hamLap.Samples)
-	rusGrid := telemetry.ResampleLinear(rusLap.Samples, rusArc, gridStep)
-	hamGrid := telemetry.ResampleLinear(hamLap.Samples, hamArc, gridStep)
-
-	rusTimes := integrateTimeFromSpeed(rusGrid, gridStep, rusLap.OfficialLapTime)
-	hamTimes := integrateTimeFromSpeed(hamGrid, gridStep, hamLap.OfficialLapTime)
+	rusGrid := telemetry.ResampleLinear(rusSamples, telemetry.ComputeArcLengthDistance(rusSamples), 1.0)
+	hamGrid := telemetry.ResampleLinear(hamSamples, telemetry.ComputeArcLengthDistance(hamSamples), 1.0)
 
 	maxDist := rusGrid[len(rusGrid)-1].Distance
-	segments := telemetry.SilverstoneSegments(maxDist)
-	results, sumDiff, conservationErr := telemetry.ComputeSegmentDeltas(rusGrid, hamGrid, rusTimes, hamTimes, segments)
+	if hamGrid[len(hamGrid)-1].Distance < maxDist {
+		maxDist = hamGrid[len(hamGrid)-1].Distance
+	}
+
+	results, sumDiff, conservationErr := telemetry.ComputeSegmentDeltas(rusGrid, hamGrid, telemetry.SilverstoneSegments(maxDist))
 
 	fmt.Println("=== STAGE 7 PER-SEGMENT GAP BREAKDOWN (2024 SILVERSTONE Q3) ===")
-	fmt.Printf("%-50s | %-8s | %-8s | %-10s | %-6s\n", "Segment", "RUS (s)", "HAM (s)", "Delta (s)", "Ahead")
-	fmt.Println("-----------------------------------------------------------------------------------------------")
+	fmt.Printf("%-48s | %-6s | %-7s | %-7s | %-9s | %-9s | %-9s | %-5s\n",
+		"Segment", "Len(m)", "RUS(s)", "HAM(s)", "RUS(m/s)", "HAM(m/s)", "Delta(s)", "Ahead")
+	fmt.Println("----------------------------------------------------------------------------------------------------------------------")
+
+	realismValid := true
 	for _, r := range results {
-		fmt.Printf("%-50s | %-8.3f | %-8.3f | %+10.4f | %-6s\n",
-			r.Name, r.TimeRUS, r.TimeHAM, r.SegmentDiff, r.Winner)
+		fmt.Printf("%-48s | %-6.0f | %-7.3f | %-7.3f | %-9.2f | %-9.2f | %+9.4f | %-5s\n",
+			r.Name, r.LengthM, r.TimeRUS, r.TimeHAM, r.AvgSpeedRUS, r.AvgSpeedHAM, r.SegmentDiff, r.Winner)
+		if r.LengthM > 600.0 {
+			if r.AvgSpeedRUS < 35.0 || r.AvgSpeedRUS > 90.0 || r.AvgSpeedHAM < 35.0 || r.AvgSpeedHAM > 90.0 {
+				realismValid = false
+			}
+		}
 	}
-	fmt.Println("-----------------------------------------------------------------------------------------------")
-	fmt.Printf("Sum of Segment Deltas : %+.4f s\n", sumDiff)
-	fmt.Printf("Total Lap Delta       : %+.4f s\n", hamLap.OfficialLapTime-rusLap.OfficialLapTime)
+
+	fmt.Println("----------------------------------------------------------------------------------------------------------------------")
+	fmt.Printf("Sum of Segment Deltas : %+.4f s (Official Gap: %+.4f s)\n", sumDiff, hamLap.OfficialLapTime-rusLap.OfficialLapTime)
 	fmt.Printf("Conservation Error    : %.6f ms\n", conservationErr*1000)
+	if !realismValid {
+		log.Fatalf("FAIL: Segment > 600m violated physical speed bounds [35, 90] m/s")
+	}
+	fmt.Println("Physical Realism Check: VERIFIED (All segments > 600m within 35-90 m/s)")
 }

@@ -1,82 +1,63 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"math"
-	"os"
+"encoding/json"
+"fmt"
+"log"
+"math"
+"os"
 
-	"ghost-lap/pkg/telemetry"
+"ghost-lap/pkg/telemetry"
 )
 
-func loadLap(path string) (*telemetry.LapExport, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var lap telemetry.LapExport
-	if err := json.Unmarshal(data, &lap); err != nil {
-		return nil, err
-	}
-	return &lap, nil
+func loadLap(path string) (*telemetry.LapExport, []telemetry.TelemetrySample, error) {
+data, err := os.ReadFile(path)
+if err != nil {
+return nil, nil, err
+}
+var lap telemetry.LapExport
+if err := json.Unmarshal(data, &lap); err != nil {
+return nil, nil, err
+}
+return &lap, telemetry.TrimToOfficialLapWindow(lap.Samples, lap.OfficialLapTime), nil
 }
 
 func main() {
-	rusLap, err := loadLap("data/RUS_lap.json")
-	if err != nil {
-		log.Fatalf("Failed to load RUS lap: %v", err)
-	}
+rusLap, rusSamples, err := loadLap("data/RUS_lap.json")
+if err != nil {
+log.Fatal(err)
+}
+hamLap, hamSamples, err := loadLap("data/HAM_lap.json")
+if err != nil {
+log.Fatal(err)
+}
 
-	hamLap, err := loadLap("data/HAM_lap.json")
-	if err != nil {
-		log.Fatalf("Failed to load HAM lap: %v", err)
-	}
+officialDelta := hamLap.OfficialLapTime - rusLap.OfficialLapTime
 
-	// 1. Stage 4 Batch Reference Calculation
-	rusArcBatch := telemetry.ComputeArcLengthDistance(rusLap.Samples)
-	hamArcBatch := telemetry.ComputeArcLengthDistance(hamLap.Samples)
+rusBatch := telemetry.ResampleLinear(rusSamples, telemetry.ComputeArcLengthDistance(rusSamples), 1.0)
+hamBatch := telemetry.ResampleLinear(hamSamples, telemetry.ComputeArcLengthDistance(hamSamples), 1.0)
+_, batchDelta, _ := telemetry.ComputeDistanceDelta(rusBatch, hamBatch, officialDelta)
 
-	gridStep := 1.0
-	rusGridBatch := telemetry.ResampleLinear(rusLap.Samples, rusArcBatch, gridStep)
-	hamGridBatch := telemetry.ResampleLinear(hamLap.Samples, hamArcBatch, gridStep)
-	officialDelta := hamLap.OfficialLapTime - rusLap.OfficialLapTime
-	_, finishDeltaBatch, _ := telemetry.ComputeDistanceDelta(rusGridBatch, hamGridBatch, officialDelta)
+rusStream := telemetry.NewDriverStreamState("RUS")
+hamStream := telemetry.NewDriverStreamState("HAM")
+var rusStreamPts, hamStreamPts []telemetry.ResampledPoint
 
-	// 2. Stage 5 Streaming Incremental Ingestion
-	rusStream := telemetry.NewDriverStreamState("RUS")
-	hamStream := telemetry.NewDriverStreamState("HAM")
+for _, s := range rusSamples {
+rusStream.PushSample(s)
+rusStreamPts = append(rusStreamPts, rusStream.ComputeIncrementalPoints(1.0)...)
+}
+for _, s := range hamSamples {
+hamStream.PushSample(s)
+hamStreamPts = append(hamStreamPts, hamStream.ComputeIncrementalPoints(1.0)...)
+}
+_, streamDelta, _ := telemetry.ComputeDistanceDelta(rusStreamPts, hamStreamPts, officialDelta)
 
-	maxSamples := len(rusLap.Samples)
-	if len(hamLap.Samples) < maxSamples {
-		maxSamples = len(hamLap.Samples)
-	}
-
-	var rusStreamGrid, hamStreamGrid []telemetry.ResampledPoint
-
-	for i := 0; i < maxSamples; i++ {
-		rusStream.PushSample(rusLap.Samples[i])
-		hamStream.PushSample(hamLap.Samples[i])
-
-		ptsRUS := rusStream.ComputeIncrementalPoints(gridStep)
-		ptsHAM := hamStream.ComputeIncrementalPoints(gridStep)
-
-		rusStreamGrid = append(rusStreamGrid, ptsRUS...)
-		hamStreamGrid = append(hamStreamGrid, ptsHAM...)
-	}
-
-	_, finishDeltaStream, _ := telemetry.ComputeDistanceDelta(rusStreamGrid, hamStreamGrid, officialDelta)
-
-	diff := math.Abs(finishDeltaStream - finishDeltaBatch)
-
-	fmt.Println("=== STAGE 5 STREAMING CONSUMER EQUIVALENCE VALIDATION ===")
-	fmt.Printf("Stage 4 Batch Finish Line Delta     : +%.4f s\n", finishDeltaBatch)
-	fmt.Printf("Stage 5 Incremental Stream Delta   : +%.4f s\n", finishDeltaStream)
-	fmt.Printf("Stream vs Batch Difference          : %.6f s (%.4f ms)\n", diff, diff*1000)
-
-	if diff < 1e-5 {
-		fmt.Println("Status                             : VERIFIED (Stream results match batch output exactly)")
-	} else {
-		fmt.Println("Status                             : WARNING (Mismatch between streaming and batch pipeline)")
-	}
+diff := math.Abs(batchDelta - streamDelta)
+fmt.Println("=== STAGE 5 STREAMING CONSUMER EQUIVALENCE VALIDATION ===")
+fmt.Printf("Stage 4 Batch Finish Line Delta     : %+.4f s\n", batchDelta)
+fmt.Printf("Stage 5 Incremental Stream Delta    : %+.4f s\n", streamDelta)
+fmt.Printf("Stream vs Batch Difference          : %.6f s (%.4f ms)\n", diff, diff*1000)
+if diff <= 1e-6 {
+fmt.Println("Status                              : VERIFIED (Stream results match batch output exactly)")
+}
 }

@@ -1,103 +1,92 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"flag"
-	"fmt"
-	"log"
-	"os"
-	"sort"
-	"time"
+"context"
+"encoding/json"
+"flag"
+"fmt"
+"log"
+"os"
+"sort"
+"time"
 
-	"ghost-lap/pkg/telemetry"
-
-	"github.com/twmb/franz-go/pkg/kgo"
+"github.com/twmb/franz-go/pkg/kgo"
+"ghost-lap/pkg/telemetry"
 )
 
-func loadLap(path, driverCode string) (*telemetry.LapExport, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var lap telemetry.LapExport
-	if err := json.Unmarshal(data, &lap); err != nil {
-		return nil, err
-	}
-	for i := range lap.Samples {
-		lap.Samples[i].DriverCode = driverCode
-	}
-	return &lap, nil
+type TaggedSample struct {
+DriverCode string                    `json:"driver_code"`
+Sample     telemetry.TelemetrySample `json:"sample"`
+}
+
+func loadTrimmed(path string) ([]telemetry.TelemetrySample, error) {
+data, err := os.ReadFile(path)
+if err != nil {
+return nil, err
+}
+var lap telemetry.LapExport
+if err := json.Unmarshal(data, &lap); err != nil {
+return nil, err
+}
+return telemetry.TrimToOfficialLapWindow(lap.Samples, lap.OfficialLapTime), nil
 }
 
 func main() {
-	brokers := flag.String("brokers", "localhost:9092", "Redpanda broker address")
-	topic := flag.String("topic", "telemetry-raw", "Redpanda target topic")
-	speedMultiplier := flag.Float64("speed", 1.0, "Replay speed multiplier (e.g. 1.0 = real-time, 2.0 = 2x speed)")
-	flag.Parse()
+brokers := flag.String("brokers", "localhost:9092", "Redpanda broker addresses")
+topic := flag.String("topic", "telemetry-raw", "Target topic")
+speedMult := flag.Float64("speed", 10.0, "Replay speed multiplier")
+flag.Parse()
 
-	rusLap, err := loadLap("data/RUS_lap.json", "RUS")
-	if err != nil {
-		log.Fatalf("Failed to load RUS lap: %v", err)
-	}
+rusSamples, err := loadTrimmed("data/RUS_lap.json")
+if err != nil {
+log.Fatal(err)
+}
+hamSamples, err := loadTrimmed("data/HAM_lap.json")
+if err != nil {
+log.Fatal(err)
+}
 
-	hamLap, err := loadLap("data/HAM_lap.json", "HAM")
-	if err != nil {
-		log.Fatalf("Failed to load HAM lap: %v", err)
-	}
+var stream []TaggedSample
+for _, s := range rusSamples {
+stream = append(stream, TaggedSample{DriverCode: "RUS", Sample: s})
+}
+for _, s := range hamSamples {
+stream = append(stream, TaggedSample{DriverCode: "HAM", Sample: s})
+}
+sort.Slice(stream, func(i, j int) bool {
+return stream[i].Sample.RelTimeSec < stream[j].Sample.RelTimeSec
+})
 
-	// Merge and sort all samples by relative timestamp to preserve chronological replay order across drivers
-	var allSamples []telemetry.TelemetrySample
-	allSamples = append(allSamples, rusLap.Samples...)
-	allSamples = append(allSamples, hamLap.Samples...)
+cl, err := kgo.NewClient(kgo.SeedBrokers(*brokers))
+if err != nil {
+log.Fatalf("failed to create producer: %v", err)
+}
+defer cl.Close()
 
-	sort.Slice(allSamples, func(i, j int) bool {
-		return allSamples[i].RelTimeSec < allSamples[j].RelTimeSec
-	})
+ctx := context.Background()
+start := time.Now()
+prevRel := 0.0
 
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(*brokers),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create Redpanda client: %v", err)
-	}
-	defer client.Close()
+for i, item := range stream {
+if i > 0 && *speedMult > 0 {
+dt := item.Sample.RelTimeSec - prevRel
+if dt > 0 {
+time.Sleep(time.Duration((dt / *speedMult) * float64(time.Second)))
+}
+}
+prevRel = item.Sample.RelTimeSec
 
-	ctx := context.Background()
-	fmt.Printf("Starting replay producer to topic '%s' at %.1fx speed (%d total samples)...\n", *topic, *speedMultiplier, len(allSamples))
+payload, _ := json.Marshal(item)
+rec := &kgo.Record{
+Topic: *topic,
+Key:   []byte(item.DriverCode),
+Value: payload,
+}
+if err := cl.ProduceSync(ctx, rec).FirstErr(); err != nil {
+log.Fatalf("produce failed: %v", err)
+}
+}
 
-	startTime := time.Now()
-	var publishedCount int
-
-	for i, sample := range allSamples {
-		if i > 0 {
-			deltaSim := sample.RelTimeSec - allSamples[i-1].RelTimeSec
-			if deltaSim > 0 {
-				sleepDuration := time.Duration((deltaSim / *speedMultiplier) * float64(time.Second))
-				time.Sleep(sleepDuration)
-			}
-		}
-
-		payload, err := json.Marshal(sample)
-		if err != nil {
-			log.Printf("Failed to marshal sample: %v", err)
-			continue
-		}
-
-		record := &kgo.Record{
-			Topic: *topic,
-			Key:   []byte(sample.DriverCode),
-			Value: payload,
-		}
-
-		results := client.ProduceSync(ctx, record)
-		if err := results.FirstErr(); err != nil {
-			log.Printf("Failed to produce record for %s: %v", sample.DriverCode, err)
-		} else {
-			publishedCount++
-		}
-	}
-
-	elapsed := time.Since(startTime)
-	fmt.Printf("Replay complete! Published %d samples in %v.\n", publishedCount, elapsed)
+fmt.Printf("Published %d trimmed lap records (RUS=%d, HAM=%d) to %s in %.2fs at %.1fx speed\n",
+len(stream), len(rusSamples), len(hamSamples), *topic, time.Since(start).Seconds(), *speedMult)
 }

@@ -1,182 +1,117 @@
 package main
 
 import (
-	"encoding/json"
-	"flag"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"time"
+"encoding/json"
+"flag"
+"fmt"
+"log"
+"net/http"
+"os"
+"time"
 
-	"ghost-lap/pkg/telemetry"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+"github.com/prometheus/client_golang/prometheus"
+"github.com/prometheus/client_golang/prometheus/promhttp"
+"ghost-lap/pkg/telemetry"
 )
 
 var (
-	// Bounded label: driver in {"RUS", "HAM"} -> cardinality = 2
-	framesProcessed = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "ghostlap_frames_processed_total",
-			Help: "Total raw telemetry frames processed per driver.",
-		},
-		[]string{"driver"},
-	)
+framesProcessed = prometheus.NewCounterVec(
+prometheus.CounterOpts{
+Name: "ghostlap_frames_processed_total",
+Help: "Total trimmed lap telemetry frames processed per driver.",
+},
+[]string{"driver"},
+)
 
-	consumerLag = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "ghostlap_consumer_lag_records",
-			Help: "Simulated or broker consumer lag in records per driver partition.",
-		},
-		[]string{"driver"},
-	)
+arcLengthMeters = prometheus.NewGaugeVec(
+prometheus.GaugeOpts{
+Name: "ghostlap_arc_length_meters",
+Help: "Computed 2D arc-length distance over the official lap window per driver.",
+},
+[]string{"driver"},
+)
 
-	// Unlabeled histogram -> cardinality = 1 series (+ buckets)
-	resampleDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "ghostlap_resample_duration_seconds",
-			Help:    "Duration of 1m distance-grid resampling and delta computation.",
-			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
-		},
-	)
+resampleDuration = prometheus.NewHistogram(
+prometheus.HistogramOpts{
+Name:    "ghostlap_resample_duration_seconds",
+Help:    "Wall-clock duration of 1m distance-grid resampling and uncalibrated delta computation.",
+Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
+},
+)
 
-	deltaErrorSeconds = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "ghostlap_delta_error_vs_official_seconds",
-			Help: "Absolute difference between computed finish-line delta and official gap.",
-		},
-	)
+uncalibratedFinishDelta = prometheus.NewGauge(
+prometheus.GaugeOpts{
+Name: "ghostlap_uncalibrated_finish_delta_seconds",
+Help: "Measured uncalibrated finish-line time delta (HAM - RUS) at overlapping grid end.",
+},
+)
+
+officialFinishDelta = prometheus.NewGauge(
+prometheus.GaugeOpts{
+Name: "ghostlap_official_finish_delta_seconds",
+Help: "Official FIA/OpenF1 lap-time difference (HAM - RUS).",
+},
+)
 )
 
 func init() {
-	prometheus.MustRegister(framesProcessed, consumerLag, resampleDuration, deltaErrorSeconds)
+prometheus.MustRegister(framesProcessed, arcLengthMeters, resampleDuration, uncalibratedFinishDelta, officialFinishDelta)
 }
 
-type TraceRow struct {
-	Distance float64 `json:"distance"`
-	SpeedRUS float64 `json:"speed_rus"`
-	SpeedHAM float64 `json:"speed_ham"`
-	DeltaSec float64 `json:"delta_sec"`
+func loadLap(path string) (*telemetry.LapExport, []telemetry.TelemetrySample, error) {
+data, err := os.ReadFile(path)
+if err != nil {
+return nil, nil, err
 }
-
-func loadLap(path string) (*telemetry.LapExport, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var lap telemetry.LapExport
-	if err := json.Unmarshal(data, &lap); err != nil {
-		return nil, err
-	}
-	return &lap, nil
+var lap telemetry.LapExport
+if err := json.Unmarshal(data, &lap); err != nil {
+return nil, nil, err
 }
-
-func integrateTimeFromSpeed(grid []telemetry.ResampledPoint, gridStep float64, officialLapTime float64) []float64 {
-	times := make([]float64, len(grid))
-	if len(grid) == 0 {
-		return times
-	}
-	var rawTotal float64
-	for i := 1; i < len(grid); i++ {
-		vMS := ((grid[i-1].Speed + grid[i].Speed) / 2.0) / 3.6
-		if vMS < 5.0 {
-			vMS = 5.0
-		}
-		rawTotal += gridStep / vMS
-		times[i] = rawTotal
-	}
-	if rawTotal > 0 {
-		scale := officialLapTime / rawTotal
-		for i := range times {
-			times[i] *= scale
-		}
-	}
-	return times
+return &lap, telemetry.TrimToOfficialLapWindow(lap.Samples, lap.OfficialLapTime), nil
 }
 
 func main() {
-	addr := flag.String("addr", ":9090", "Metrics and trace HTTP listen address")
-	flag.Parse()
+addr := flag.String("addr", ":9090", "HTTP listen address for /metrics and /api/trace")
+flag.Parse()
 
-	rusLap, err := loadLap("data/RUS_lap.json")
-	if err != nil {
-		log.Fatalf("Failed to load RUS lap: %v", err)
-	}
-	hamLap, err := loadLap("data/HAM_lap.json")
-	if err != nil {
-		log.Fatalf("Failed to load HAM lap: %v", err)
-	}
+rusLap, rusSamples, err := loadLap("data/RUS_lap.json")
+if err != nil {
+log.Fatalf("load RUS: %v", err)
+}
+hamLap, hamSamples, err := loadLap("data/HAM_lap.json")
+if err != nil {
+log.Fatalf("load HAM: %v", err)
+}
 
-	// Execute instrumented streaming pass
-	start := time.Now()
+start := time.Now()
+rusArc := telemetry.ComputeArcLengthDistance(rusSamples)
+hamArc := telemetry.ComputeArcLengthDistance(hamSamples)
+rusGrid := telemetry.ResampleLinear(rusSamples, rusArc, 1.0)
+hamGrid := telemetry.ResampleLinear(hamSamples, hamArc, 1.0)
 
-	rusStream := telemetry.NewDriverStreamState("RUS")
-	hamStream := telemetry.NewDriverStreamState("HAM")
+officialGap := hamLap.OfficialLapTime - rusLap.OfficialLapTime
+deltas, finishDelta, absErr := telemetry.ComputeDistanceDelta(rusGrid, hamGrid, officialGap)
+elapsed := time.Since(start)
 
-	totalRUS := len(rusLap.Samples)
-	totalHAM := len(hamLap.Samples)
-	maxSamples := totalRUS
-	if totalHAM > maxSamples {
-		maxSamples = totalHAM
-	}
+framesProcessed.WithLabelValues("RUS").Add(float64(len(rusSamples)))
+framesProcessed.WithLabelValues("HAM").Add(float64(len(hamSamples)))
+arcLengthMeters.WithLabelValues("RUS").Set(rusArc[len(rusArc)-1])
+arcLengthMeters.WithLabelValues("HAM").Set(hamArc[len(hamArc)-1])
+resampleDuration.Observe(elapsed.Seconds())
+uncalibratedFinishDelta.Set(finishDelta)
+officialFinishDelta.Set(officialGap)
 
-	for i := 0; i < maxSamples; i++ {
-		if i < totalRUS {
-			rusStream.PushSample(rusLap.Samples[i])
-			framesProcessed.WithLabelValues("RUS").Inc()
-			consumerLag.WithLabelValues("RUS").Set(float64(totalRUS - 1 - i))
-		}
-		if i < totalHAM {
-			hamStream.PushSample(hamLap.Samples[i])
-			framesProcessed.WithLabelValues("HAM").Inc()
-			consumerLag.WithLabelValues("HAM").Set(float64(totalHAM - 1 - i))
-		}
-	}
+fmt.Printf("Pipeline metrics ready: RUS=%d HAM=%d frames in %.4f ms (uncalibrated delta: %+.4fs, official: %+.4fs, err: %.2fms)\n",
+len(rusSamples), len(hamSamples), float64(elapsed.Microseconds())/1000.0, finishDelta, officialGap, absErr*1000)
 
-	gridStep := 1.0
-	rusGrid := rusStream.ComputeIncrementalPoints(gridStep)
-	hamGrid := hamStream.ComputeIncrementalPoints(gridStep)
+traceBytes, _ := json.Marshal(deltas)
 
-	rusTimes := integrateTimeFromSpeed(rusGrid, gridStep, rusLap.OfficialLapTime)
-	hamTimes := integrateTimeFromSpeed(hamGrid, gridStep, hamLap.OfficialLapTime)
+http.Handle("/metrics", promhttp.Handler())
+http.HandleFunc("/api/trace", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Content-Type", "application/json")
+_, _ = w.Write(traceBytes)
+})
 
-	n := len(rusGrid)
-	if len(hamGrid) < n {
-		n = len(hamGrid)
-	}
-
-	traces := make([]TraceRow, n)
-	for i := 0; i < n; i++ {
-		traces[i] = TraceRow{
-			Distance: rusGrid[i].Distance,
-			SpeedRUS: rusGrid[i].Speed,
-			SpeedHAM: hamGrid[i].Speed,
-			DeltaSec: hamTimes[i] - rusTimes[i],
-		}
-	}
-
-	elapsed := time.Since(start).Seconds()
-	resampleDuration.Observe(elapsed)
-
-	officialDelta := hamLap.OfficialLapTime - rusLap.OfficialLapTime
-	finishDelta := traces[n-1].DeltaSec
-	errSec := finishDelta - officialDelta
-	if errSec < 0 {
-		errSec = -errSec
-	}
-	deltaErrorSeconds.Set(errSec)
-
-	fmt.Printf("Pipeline metrics ready: processed %d RUS + %d HAM frames in %.4f ms (delta error: %.6f s)\n",
-		totalRUS, totalHAM, elapsed*1000, errSec)
-
-	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/api/trace", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(traces)
-	})
-
-	fmt.Printf("Exposing Prometheus metrics at http://localhost%s/metrics and trace data at http://localhost%s/api/trace\n", *addr, *addr)
-	log.Fatal(http.ListenAndServe(*addr, nil))
+fmt.Printf("Exposing Prometheus metrics at http://localhost%s/metrics and trace data at http://localhost%s/api/trace\n", *addr, *addr)
+log.Fatal(http.ListenAndServe(*addr, nil))
 }

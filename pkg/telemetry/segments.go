@@ -4,7 +4,7 @@ import "math"
 
 type TrackSegment struct {
 	Name      string  `json:"name"`
-	Type      string  `json:"type"` // "Corner Complex", "Braking Zone", "Straight"
+	Type      string  `json:"type"`
 	StartDist float64 `json:"start_dist"`
 	EndDist   float64 `json:"end_dist"`
 }
@@ -14,13 +14,15 @@ type SegmentResult struct {
 	Type        string  `json:"type"`
 	StartDist   float64 `json:"start_dist"`
 	EndDist     float64 `json:"end_dist"`
+	LengthM     float64 `json:"length_m"`
 	TimeRUS     float64 `json:"time_rus"`
 	TimeHAM     float64 `json:"time_ham"`
-	SegmentDiff float64 `json:"segment_diff"` // Positive = HAM lost time (RUS faster); Negative = HAM gained time
+	AvgSpeedRUS float64 `json:"avg_speed_rus_ms"`
+	AvgSpeedHAM float64 `json:"avg_speed_ham_ms"`
+	SegmentDiff float64 `json:"segment_diff"`
 	Winner      string  `json:"winner"`
 }
 
-// SilverstoneSegments defines contiguous track segments covering 0 to 5856m
 func SilverstoneSegments(maxDist float64) []TrackSegment {
 	return []TrackSegment{
 		{Name: "S1: Grid & Abbey / Farm (T1-T2)", Type: "High-Speed Corner", StartDist: 0, EndDist: 780},
@@ -33,16 +35,14 @@ func SilverstoneSegments(maxDist float64) []TrackSegment {
 	}
 }
 
-// ComputeSegmentDeltas computes per-segment elapsed times and verifies telescoping sum conservation
-func ComputeSegmentDeltas(rusGrid, hamGrid []ResampledPoint, rusTimes, hamTimes []float64, segments []TrackSegment) ([]SegmentResult, float64, float64) {
-	maxIdx := len(rusTimes) - 1
-	if len(hamTimes)-1 < maxIdx {
-		maxIdx = len(hamTimes) - 1
+func ComputeSegmentDeltas(rusGrid, hamGrid []ResampledPoint, segments []TrackSegment) ([]SegmentResult, float64, float64) {
+	maxIdx := len(rusGrid) - 1
+	if len(hamGrid)-1 < maxIdx {
+		maxIdx = len(hamGrid) - 1
 	}
 
-	// Scale segment meter boundaries if track perimeter differs from 5856m
 	scale := 1.0
-	if len(segments) > 0 && segments[len(segments)-1].EndDist > 0 && float64(maxIdx) < segments[len(segments)-1].EndDist {
+	if len(segments) > 0 && segments[len(segments)-1].EndDist > 0 {
 		scale = float64(maxIdx) / segments[len(segments)-1].EndDist
 	}
 
@@ -65,10 +65,20 @@ func ComputeSegmentDeltas(rusGrid, hamGrid []ResampledPoint, rusTimes, hamTimes 
 			endIdx = maxIdx
 		}
 
-		dtRUS := rusTimes[endIdx] - rusTimes[startIdx]
-		dtHAM := hamTimes[endIdx] - hamTimes[startIdx]
+		lengthM := float64(endIdx - startIdx)
+		dtRUS := rusGrid[endIdx].RelTimeSec - rusGrid[startIdx].RelTimeSec
+		dtHAM := hamGrid[endIdx].RelTimeSec - hamGrid[startIdx].RelTimeSec
 		diff := dtHAM - dtRUS
 		sumSegmentDiff += diff
+
+		avgSpdRUS := 0.0
+		if dtRUS > 0 {
+			avgSpdRUS = lengthM / dtRUS
+		}
+		avgSpdHAM := 0.0
+		if dtHAM > 0 {
+			avgSpdHAM = lengthM / dtHAM
+		}
 
 		winner := "RUS"
 		if diff < 0 {
@@ -80,14 +90,17 @@ func ComputeSegmentDeltas(rusGrid, hamGrid []ResampledPoint, rusTimes, hamTimes 
 			Type:        seg.Type,
 			StartDist:   float64(startIdx),
 			EndDist:     float64(endIdx),
+			LengthM:     lengthM,
 			TimeRUS:     dtRUS,
 			TimeHAM:     dtHAM,
+			AvgSpeedRUS: avgSpdRUS,
+			AvgSpeedHAM: avgSpdHAM,
 			SegmentDiff: diff,
 			Winner:      winner,
 		}
 	}
 
-	totalDelta := hamTimes[maxIdx] - rusTimes[maxIdx]
+	totalDelta := hamGrid[maxIdx].RelTimeSec - rusGrid[maxIdx].RelTimeSec
 	conservationErr := math.Abs(sumSegmentDiff - totalDelta)
 	return results, sumSegmentDiff, conservationErr
 }
